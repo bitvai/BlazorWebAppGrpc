@@ -1,0 +1,105 @@
+﻿@page "/weather"
+@using BlazorWebAppGrpc.Models
+@using BlazorWebAppGrpc.Services
+@using Google.Protobuf.WellKnownTypes
+@using Grpc.Core
+@using Grpc.Net.Client
+@attribute [StreamRendering]
+@implements IDisposable
+
+<PageTitle>Weather</PageTitle>
+
+<h1>Weather</h1>
+
+<p>This component demonstrates showing data.</p>
+
+@if (forecasts == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Temp. (C)</th>
+                <th>Temp. (F)</th>
+                <th>Summary</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var forecast in forecasts)
+            {
+                <tr>
+                    <td>@forecast.Date</td>
+                    <td>@forecast.TemperatureC</td>
+                    <td>@forecast.TemperatureF</td>
+                    <td>@forecast.Summary</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private WeatherData[]? forecasts;
+    CancellationTokenSource _cts;
+    GrpcChannel channel;
+    protected override async Task OnInitializedAsync()
+    {
+        Console.WriteLine("OnInitialize");
+        _cts = new CancellationTokenSource();
+        // Simulate asynchronous loading to demonstrate streaming rendering
+        channel = WeatherService.CreateChannel();
+        var client = new WeatherForcastService.WeatherForcastServiceClient(channel);
+        var response = await client.GetWeatherForcastsAsync(new GetWeatherForcastsRequest());
+        forecasts = response.List.Select(weather => new WeatherData()
+        {
+            Date = weather.Date,
+            TemperatureC = weather.TemperatureC,
+            Summary = weather.Summary
+        }).ToArray();
+        Console.WriteLine("First forecast");
+
+        await Task.Run(async () =>
+        {
+            try
+            {
+                var stream = client.SubstcribeWeatherForcasts(new Empty());
+                await foreach (var fc in stream.ResponseStream.ReadAllAsync(_cts.Token))
+                {
+                    forecasts = fc.List.Select(weather => new WeatherData()
+                    {
+                        Date = weather.Date,
+                        TemperatureC = weather.TemperatureC,
+                        Summary = weather.Summary
+                    }).ToArray();
+                    
+                    await InvokeAsync(StateHasChanged);
+                }
+                Console.WriteLine("Foreach end");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+            }
+        });
+    }
+
+    public void Dispose()
+    {
+        Console.WriteLine("Dispose");
+        _cts.Cancel();
+        channel.Dispose();
+    }
+
+    private class WeatherData
+    {
+        public string? Date { get; set; }
+        public int TemperatureC { get; set; }
+        public string? Summary { get; set; }
+        public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+
+    }
+}
